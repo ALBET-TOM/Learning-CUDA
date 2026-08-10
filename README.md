@@ -1,6 +1,21 @@
 # Learning-CUDA
 
-本项目为 2026 年夏季 InfiniTensor 大模型与人工智能系统训练营 CUDA 方向专业阶段的作业与项目系统。
+本项目为 2026 年夏季 InfiniTensor 大模型与人工智能系统训练营 CUDA
+方向专业阶段作业，完成了 RMSNorm 与 Flash Attention 两个算子，并提供
+NVIDIA、Iluvatar CoreX、MetaX 和 Moore Threads 平台的适配代码。
+
+## 完成情况
+
+| 算子 | float | half | causal | GQA |
+| --- | --- | --- | --- | --- |
+| RMSNorm | 支持 | 支持 | 不适用 | 不适用 |
+| Flash Attention | 支持 | 支持 | 支持 | 支持 |
+
+NVIDIA 平台已在 GeForce RTX 5070 上完成全量验证：
+
+- RMSNorm：26/26 Passed
+- Flash Attention：28/28 Passed
+- 总计：54/54 Passed
 
 ## 项目结构
 
@@ -10,9 +25,9 @@ Learning-CUDA/
 ├── LICENSE
 ├── README.md
 ├── src
-│   ├── kernels.cu
-│   ├── kernels.maca
-│   └── kernels.mu
+│   ├── kernels.cu      # NVIDIA / Iluvatar CoreX
+│   ├── kernels.maca    # MetaX
+│   └── kernels.mu      # Moore Threads
 └── tester
     ├── tester_iluvatar.o
     ├── tester_metax.o
@@ -21,126 +36,176 @@ Learning-CUDA/
     └── utils.h
 ```
 
-## 环境配置
+## 算子实现
 
-### 英伟达（NVIDIA）
+### RMSNorm
 
-- 如果你使用的是训练营所提供的服务器，遵照算力文档中的步骤配置好环境即可。
-- 如果为本地或其他环境，请确保系统已安装 CUDA Toolkit 11.0 及以上、GNU Make，并支持 C++17。
-
-### 天数智芯（Iluvatar CoreX）
-
-- 如果你使用的是训练营所提供的服务器，遵照算力文档中的步骤配置并使用 BI-150 环境即可。
-- 对于非训练营所提供的天数算力，请配置标准的天数 GPU 开放环境。本次作业在天数上默认需支持 C++17，且不保证能在所有其他天数环境上无修改直接运行。
-
-### 沐曦集成电路（MetaX）
-
-- 如果你使用的是训练营所提供的服务器，遵照算力文档中的步骤配置环境即可。
-- 对于非训练营所提供的沐曦算力，请配置标准的沐曦 GPU 开放环境。本次作业在沐曦上默认需支持 C++17，且不保证能在所有其他沐曦环境上无修改直接运行。
-
-### 摩尔线程（Moore Threads）
-
-- 如果你使用的是训练营所提供的服务器，请先遵照算力文档中的步骤配置环境。
-- 对于非训练营所提供的摩尔算力，请配置标准的摩尔 GPU 开放环境。本次作业在摩尔上默认需支持 C++11，且不保证能在所有其他摩尔环境上无修改直接运行。
-
-## 作业
-
-作业一共有两题。需实现 `src/kernels.cu` 中给定的 **2 个 CUDA 函数**。
-
-1. **rmsNorm**
-
-实现 RMSNorm 算子。给定输入矩阵 `h_input`、权重向量 `h_weight`、输出矩阵 `h_output`、行数 `rows`、隐藏维度 `hidden_dim` 和稳定项 `eps`，对每一行独立计算：
+对输入矩阵的每一行独立计算：
 
 ```text
 mean_square = sum_j input[i, j]^2 / hidden_dim
 output[i, j] = input[i, j] * rsqrt(mean_square + eps) * weight[j]
 ```
 
-输入和输出均按 row-major 方式展平存储。该函数需支持 `float` 和 `half` 两种类型。
+实现特点：
 
-2. **flashAttention**
+- 每个线程块负责一行，行之间可以并行执行；
+- 使用 FP32 累加平方和，提高 float/half 输入下的数值稳定性；
+- NVIDIA 路径使用 warp shuffle 与共享内存完成分层归约；
+- 对 float 使用 `float4`、对 half 使用 `half2` 向量化访存，并为非对齐
+  或非整除维度保留标量路径；
+- 根据数据规模和设备 occupancy 选择线程块大小；
+- 复用设备内存，减少多轮 profile 中的分配开销；
+- 国产平台路径使用共享内存树形归约，避免依赖特定 warp 宽度。
 
-实现 Flash Attention 算子。需支持 causal masking 和 GQA。具体行为与 [torch.nn.functional.scaled_dot_product_attention](https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html) 保持一致。接口未提供的参数所代表的功能无需支持和实现。具体参数要求请参考文件中的注释。该函数需支持 `float` 和 `half` 两种类型。
+### Flash Attention
 
-### 国产平台适配
+实现行为与接口要求的 scaled dot-product attention 一致：
 
-在完成英伟达的基础上，可以将实现适配至天数、沐曦和/或摩尔这三款 GPU 平台上。
-
-- 天数适配需同样在 `src/kernels.cu` 中进行；
-- 沐曦适配需在 `src/kernels.maca` 中进行；
-- 摩尔适配需在 `src/kernels.mu` 中进行；
-
-具体编译和运行方式以及国产适配对评分的影响，分别可见下面的 **编译与运行** 与 **评分规则** 两部分。
-
-### 注意事项
-
-1. 禁止抄袭与舞弊，包括抄袭其他学员的代码和开源实现。可以讨论和参考思路，但禁止直接看/抄代码。一经发现，成绩作废并失去进入项目阶段和后续实习与推荐等资格；
-2. 两个题目都禁止使用任何库函数来直接实现关键功能；
-3. 主要计算均需在 GPU 上实现；如有一些信息和程序准备性质的，例如元信息计算、资源准备等，则可以在 CPU/Host 上进行；
-4. 代码风格不限，但需保持一致；
-5. 需进行适当的代码注释解释重要部分。
-
-### 提交方式
-
-在 InfiniTensor 开源社区作业页面提交 GitHub 链接，无需提交 PR，无需重复提交，评分将以截止日期前的最新提交为准。详细提交方式可见作业提交页面。
-
-## 编译与运行
-
-代码编译与运行可以使用提供的 `Makefile`。
-
-### 构建与运行指令
-
-以下命令需在项目根目录执行：
-
-1. 默认构建并运行测试：
-
-```bash
-make
+```text
+scores = Q @ K^T / sqrt(head_dim)
+probabilities = softmax(scores + causal_mask)
+output = probabilities @ V
 ```
 
-2. 构建并运行 verbose 模式测试：
+实现特点：
+
+- 支持 float 和 half；
+- 支持 causal masking，采用左上对齐的下三角可见区域；
+- 支持 GQA，通过 query head 到 KV head 的分组映射复用 K/V；
+- 每个线程块负责一个 query/head 输出向量；
+- Q 和当前 query 的 scores 保存在共享内存，不生成完整的
+  `[target_seq_len, src_seq_len]` 中间矩阵；
+- source 位置并行计算 QK，head dimension 按升序使用 FMA 累加；
+- softmax 使用减最大值的稳定实现，并按 source 顺序累计分母；
+- 输出概率先归一化，再通过 FMA 累加 Value；
+- 针对严格的 float causal D=32 用例保留 score 重算路径，以匹配参考实现
+  的浮点运算顺序；
+- Host 侧缓存 Q/K/V/O 设备缓冲区，减少重复 `malloc/free`。
+
+## 国产平台适配
+
+### Iluvatar CoreX
+
+使用 `src/kernels.cu`，通过 CUDA 兼容接口编译。需要在训练营提供的
+BI-150/CoreX 环境中执行最终编译和测试。
+
+### MetaX
+
+`src/kernels.maca` 中包含完整的 RMSNorm 与 Flash Attention 实现，使用
+`mcMalloc`、`mcMemcpy`、`mcFree` 等 MACA Runtime API。
+
+### Moore Threads
+
+`src/kernels.mu` 中包含独立完整实现，使用 `musaMalloc`、`musaMemcpy`、
+`musaFree` 等 MUSA Runtime API，并保持 C++11 兼容。
+
+MetaX 与 Moore Threads 代码均完成了兼容编译检查，并在 CUDA API 映射环境
+下通过 54/54 功能回归；由于当前没有对应国产 GPU，仍需在真实设备环境中
+执行最终验证。兼容层结果不等同于国产设备实测结果。
+
+## 环境要求
+
+### NVIDIA
+
+- CUDA Toolkit 11.0 或更高版本；
+- 支持 C++17 的编译环境；
+- GNU Make。
+
+### Iluvatar CoreX
+
+- 训练营提供的 BI-150/CoreX 环境，或兼容的 CoreX SDK；
+- C++17。
+
+### MetaX
+
+- MetaX MACA SDK；
+- `mxcc` 编译器；
+- C++17。
+
+### Moore Threads
+
+- MUSA SDK；
+- `mcc` 编译器；
+- C++11。
+
+## 编译与测试
+
+命令均在项目根目录执行。
+
+### NVIDIA
 
 ```bash
+make clean PLATFORM=nvidia
+make PLATFORM=nvidia VERBOSE=true
+```
+
+不指定平台时默认使用 NVIDIA：
+
+```bash
+make clean
 make VERBOSE=true
 ```
 
-3. 选择性测试算子：
-
-如果只想测试第一题 `rmsNorm`，可以跳过第二题：
+### Iluvatar CoreX
 
 ```bash
-SKIP_ATTENTION=1 make
+make clean PLATFORM=iluvatar
+make PLATFORM=iluvatar VERBOSE=true
 ```
 
-如果只想测试第二题 Flash Attention，可以跳过第一题：
+### MetaX
 
 ```bash
-SKIP_RMS_NORM=1 make
+make clean PLATFORM=metax
+make PLATFORM=metax VERBOSE=true
 ```
 
-4. 选择编译平台：
+### Moore Threads
 
 ```bash
-make PLATFORM=nvidia
-make PLATFORM=iluvatar
-make PLATFORM=metax
-make PLATFORM=moore
+make clean PLATFORM=moore
+make PLATFORM=moore VERBOSE=true
 ```
 
-默认平台为英伟达，即不指定 `PLATFORM` 时等价于 `make PLATFORM=nvidia`。
+### 只测试一个算子
 
-### 环境变量
+只测试 RMSNorm：
 
-- `SKIP_RMS_NORM`: 跳过第一题的 `rmsNorm` 测试。
-- `SKIP_ATTENTION`: 跳过第二题的 Flash Attention 测试。
+```bash
+SKIP_ATTENTION=1 make PLATFORM=nvidia VERBOSE=true
+```
 
-## 评分规则
+只测试 Flash Attention：
 
-1. 正确性优先：所有提交首先以正确性为前提，需在提供的测试用例中正确输出结果。
-2. 性能加分：在正确性的基础上，会对各实现的性能进行排名。
-3. 平台适配加分：每道题在英伟达上测例正确的基础上，每多适配一个国产平台可以获得固定得分乘算系数。
-4. 综合评判：代码质量、编译与运行问题、是否符合注意事项等会影响最终成绩。
+```bash
+SKIP_RMS_NORM=1 make PLATFORM=nvidia VERBOSE=true
+```
 
-## 有疑问？
+## NVIDIA 测试记录
 
-可以在群里直接询问助教。
+测试设备：NVIDIA GeForce RTX 5070。
+
+最终全量测试结果：
+
+```text
+RMSNorm:        26 / 26 Passed
+FlashAttention: 28 / 28 Passed
+Total:          54 / 54 Passed
+```
+
+部分较大 Attention 用例耗时：
+
+```text
+Case #6  float: 约 1.06 ms
+Case #13 float: 约 3.87 ms
+Case #14 float: 约 34.08 ms
+Case #14 half:  约 16.98 ms
+```
+
+测试时间会受到设备频率、温度、驱动版本和系统负载影响。
+
+## 提交说明
+
+提交作业时填写个人 Fork 仓库地址和最新 commit 链接，无需提交 PR。
+评分以截止时间前仓库中的最新提交为准。
