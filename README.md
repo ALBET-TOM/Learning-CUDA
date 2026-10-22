@@ -1,7 +1,6 @@
 # Learning-CUDA
 
-本项目为 2026 年夏季 InfiniTensor 大模型与人工智能系统训练营 CUDA
-方向专业阶段作业，完成了 RMSNorm 与 Flash Attention 两个算子，并提供
+完成了 RMSNorm 与 Flash Attention 两个算子，并提供
 NVIDIA、Iluvatar CoreX、MetaX 和 Moore Threads 平台的适配代码。
 
 ## 完成情况
